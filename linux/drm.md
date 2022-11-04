@@ -1,4 +1,4 @@
-# drm框架
+# DRM框架
 
 linux使用drm作为图形子系统, 统一管理gpu, display controller, 功能包含图形显示, 渲染, 图形内存管理等
 源码位置: drivers/gpu/drm

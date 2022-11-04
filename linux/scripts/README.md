@@ -1,4 +1,4 @@
-# scripts
+# Scripts
 
 bash 脚本
 
