@@ -1,0 +1,871 @@
+
+内存寻址
+	MMU(内存控制单元)
+		逻辑地址: 机器指令中指定一个操作数或一条指令的地址, 组成: 段选择符(16bit) + 偏移量(32bit)
+		逻辑地址 --分段单元--> 线性地址 --分页单元--> 物理地址
+		段选择符 ----> 描述符表(查找) --> +偏移量 = 虚拟地址
+	内存仲裁器
+		多个CPU共享内存, RAM芯片由独立CPU并发访问, RAM空闲准许一个CPU访问
+	段寄存器
+		cs, ss, ds, es, fs, gs六个段寄存器, 存放段选择符
+		cs: 代码段寄存器, 指向包含程序指令的段, 包含特权级0~3, 0内核态, 3用户态
+		ss: 栈寄存器, 指向包含当前程序栈的段
+		ds: 数据段, 指向包含静态数据或者全局数据段
+	段选择符
+		通常包含三个字段
+			index: 放在GDT/LDT中的对应偏移(13bit)
+			TI: 0代表在GDT中, 1代表在LDT中(1bit)
+			RPL: 相应段放入CS中时, 指示CPU当前的特权级(2bit)
+		GDT/LDT内段描述符 = 段选择符13bit*8
+		GDT地址 = 0x00020000(保存在gdtr寄存器中)
+		段选择符索引号 = 2
+		段描述符所在地址 = 0x00020000 + (2 << 3) = 0x00020010
+		GDT中第一项总是0, GDT存放段描述符最大数目为2^13 - 1 = 8191
+	段描述符
+		每一个段由8字节段描述符表示, 描述段特征, 放在全局描述符表(GDT)/局部描述符表(LDT)中
+		通常定义一个GDT, 每个进程存放GDT段之外, 若有需要创建LDT,
+		GDT: GDT在主存的地址和大小放在gdtr控制寄存器中
+		LDT: 当前正在被使用的LDT地址和大小放在ldtr控制寄存器中
+		代码段描述符(64bit, 每一位均有含义)
+			代表一个代码段, S标志为1
+		数据段描述符(64bit, 每一位均有含义)
+			代表一个数据段, 可以放在GDT或LDT中, S标志为1,
+		任务状态段描述符(64bit, 每一位均有含义)
+			代表一个任务状态段, 段用于保护处理器寄存器的内容, 出现在GDT中, S标志为0
+		局部描述符
+			包含一个LDT段, 只出现在GDT中
+	快速访问段描述符
+		非编程的寄存器, 供6个可编程段寄存器使用
+			段选择符放入段寄存器中, 相应段描述符由内存装入对应的非编程寄存器中,
+		针对那个段的逻辑地址转换, 可以不访问主存中GDT/LDT, 直接引用非编程寄存器,
+		当段寄存器内容改变时, 才有必要访问GDT/LDT
+	分段单元
+		1.检查段选择符TI字段, 决定段描述符保存在哪一个描述符表中, 从gdtr/ldtr获取基地址
+		2.计算index得到段描述符, 将偏移量 + 段描述符Base字段 = 线性地址
+	Linux中的分段
+		只有在2.6版80x86架构下才使用分段
+			1.当所有进程使用相同段寄存器时, 内存管理简单, 共享同一组线性地址
+		第二章Linux中的分段
+	页
+			线性地址分为固定长度单位的组, 页内部线性地址映射到连续的物理内存中,可以指定
+		可以指定一个页的物理地址与存取权限, 而不用指定页所包含的全部线性地址的存取权限
+		页指一组线性地址, 又指包含在这组地址中的数据
+	页框
+			将所有RAM分成固定长度的页框(或者叫物理页), 每一个页框包含一个页,
+		页框是主存的一部分, 页是一个数据块, 可以放在任何页框或者磁盘中
+	页表
+		线性地址映射到物理的数据结构, 存在主存中, 启用分页单元之前, 由内核对页表初始化
+	分页单元
+		访问类型与线性地址的访问权限比较, 若内存访问无效产生缺页异常, 处理4KB页
+	常规分页
+		页大小4KB
+		32线性地址划分
+			dir(页目录10bit) + table(页表10bit) + offset(12bit)
+		使用一级页表: 2^20个页表项(高20bit都可以检索页表), 一个4B, 共占用4MB内存空间
+		为每个活动进程分配页目录, 但实际需要一个页表时才给页表分配RAM
+		CR3寄存器: 正在使用的页目录的物理地址
+		页表基地址 = 页目录项 = CR3 + 页目录
+		页表项 = 页表基地址 + 页表
+		物理地址 = 页表项 + offset
+		页目录/页表项包含字段
+			高20字段
+				每一个页框4KB容量, 物理地址必须2^12倍数, 因此低12位全为0
+				字段指向一个页目录,则相应页框就有一个页表
+				指向一个页表,则相应页框就有页数据
+			低12位
+				P: 为1表示页表或者页位于内存中, 否则, 表示不在内存中, 将线性地址放入CR2寄存器中, 产生14号中断, 必须先予以创建或者从磁盘调入内存后方可使用
+				R/W: 读写标志。为1表示页面可以被读写, 为0表示只读。当处理器运行在0、1、2特权级时, 此位不起作用。页目录中的这个位对其所映射的所有页面起作用
+				U/S: 用户/超级用户标志。为1时, 允许所有特权级别的程序访问；为0时, 仅允许特权级为0、1、2的程序访问。页目录中的这个位对其所映射的所有页面起作用
+				PWT: Page级的Write-Through标志位。为1时使用Write-Through的Cache类型；为0时使用Write-Back的Cache类型。当CR0.CD=1时（Cache被Disable掉）, 此标志被忽略。对于我们的实验, 此位清零
+				PCD: Page级的Cache Disable标志位。为1时, 物理页面是不能被Cache的；为0时允许Cache。当CR0.CD=1时, 此标志被忽略。对于我们的实验, 此位清零
+				A: 访问位。该位由处理器固件设置, 用来指示此表项所指向的页是否已被访问（读或写）, 一旦置位, 处理器从不清这个标志位。这个位可以被操作系统用来监视页的使用频率
+				D: 脏位。该位由处理器固件设置, 用来指示此表项所指向的页是否写过数据
+				PS: Page Size位。为0时, 页的大小是4KB；为1时, 页的大小是4MB（for normal 32-bit addressing ）或者2MB（if extended physical addressing is enabled)
+				G: 全局位。如果页是全局的, 那么它将在高速缓存中一直保存。当CR4.PGE=1时, 可以设置此位为1, 指示Page是全局Page, 在CR3被更新时, TLB内的全局Page不会被刷新
+				AVL[11]: 被处理器忽略, 软件可以使用
+	扩展分页
+		允许页大小为4MB
+		32线性地址划分
+			dir(页目录10bit) + offset(22bit)
+		通过设置CR4寄存器的PSE标志使扩展分页与常规内存分页共存
+	例子
+		已经分配给进程空间0x20000000~0x2003ffff, 64页
+		dir = 0x80 --> 页目录第129项含有页表基地址
+		table = 0x~0x03f --> 页表项中前64个有意义
+		读取线性地址0x20021406中数据
+			dir = 0x80 --> 选择页目录第0x80项查找页表
+			table = 0x21 --> 选择页表中第0x21表项查找物理地址
+			offset = 0x406 --> 读取物理地址偏移0x406中字节
+			如果table中present标志位0, 产生缺页异常, 进程访问范围外地址, 均产生缺页异常
+	物理地址扩展分页
+		32位线性地址转换为36位物理地址可寻址2^36 = 64GB
+		通过设置CR4中PAE标志激活PAE, 页目录项中的大小标志改为2MB
+		引入页目录指针表(PDPT), 由4个64位表项组成
+		CR3包含一个27位页目录指针表基地址, PDPT存放在RAM中前4GB中, 并在32bytes倍数对齐
+		映射到4KB时
+			CR3 指向PDPT
+			pdpt表项(2bit) + dir(页表9bit) + table (9bit)+ offset(12bit)
+		映射到2MB时
+			CR3 指向PDPT
+			pdpt表4项中的一个(2bit) + dir(页表8bit) + offset(21bit)
+	硬件高速缓存
+		73页(cache)
+	TLB
+			线性地址第一次被使用时, 通过慢速访问RAM中页表计算出相应的物理地址,
+		同时物理地址存放在TLB表项中, 以便以后对同一个线性地址引用可快速转换
+			每一个CPU上都有TLB表, 当CPU的CR3寄存器被修改时, 硬件使本地TLB所有项无效
+	采用4级分页(兼容32和64bit系统)
+		PGD + PUD + PMD + PT + offset
+		对于两级页表足够系统(32bit), 页上级目录(PUD)和页中间目录(PMD)均为0
+		  每一个进程有自己的页全局目录, 发生进程切换时, 把CR3寄存器的内容保存执行进程的描述符中
+		将下一个要执行的进程描述符装入CR3中
+	线性地址字段
+		PAGE_SHIFT
+			值为12, 指定offset位数, 页大小4KB, PAGE_MASK(0xfffff000)屏蔽offset所有位
+		PMD_SHIFT
+			offset与table字段总位数
+			PAE禁用时, 值为22(offset 12bit + table 10bit)
+			PAE激活时, 值为21(offset 12bit + table 9bit)
+		PUD_SHIFT
+			32位中等价于PMD_SHIFT
+		PGDIR_SHIFT
+			PAE禁用时, 值为22(offset 12bit + table 10bit, 同PMD_SHIFT)
+			PAE激活时, 值为30(offset 12bit + table 9bit + PMD 9bit)
+		PTRS_PER_PTE/PME/PUD/PGD
+			计算页表/页中间目录/页上级目录/页全局目录中表项个数
+			PAE禁用时, 值分别为1024, 1, 1, 1024
+			PAE激活时, 值分别为512, 512, 1, 4
+	页表处理
+		PAE激活时, 下列数据类型均为64位, 否则32位
+		pte/pmd/pud/pgd/pgprot_t
+			页表项, 页中间目录项, 页上级目录项, 页全局目录项, 单独表项相关保护标志
+		pte/pmd/pud/pgd_none
+			相应表项为0, 则为1
+		pte/pmd/pud/pgd_clear
+			清除相应表一个表项, 由此禁止进程使用该表项映射线性地址	、
+			ptep_get_and_clear()清除一个表项并返回前一个值
+		set_pte/pmd/pud/pgd
+			向一个页表项写入指定值
+			set_pte_atomic, 当PAE激活时, 保证64位值被原子写入
+		__pte/pmd/pud/pgd
+			将无符号整数转换为所需要的类型
+		pte/pmd/pud/pgd_val
+			将特殊类型转换为无符号整数
+		pte_same
+			两个页表项指向同一页并且指定相同的访问优先级, 则返回1
+		pmd_large
+			如果页中间目录项指向一个大型页, 那么返回1
+		pmd_bad
+			如果目录项指向一个不能使用的页表(P/RW/A/D标志位清除), 则为1
+		pte/pud/pgd_bad
+			pud/pgd总是0, 无pte_bad, 页表项引用一个不在主页/不可写/无法访问均合法
+		pte/pmd/pud/pgd_present
+			一个页表项P/PS标志为1, 则返回1, pud/pgd总是1,
+				存在于主存没有读写或执行, 内核将P和PS位设置为0和1, 访问这些页均产生缺页异常
+			然后通过PS位判断是不是缺页
+		读页标志函数
+			pte_user/read/write/exec/dirty/young/file
+				读各标志位, 除file外, 当present位为1才有效,
+				pte_file(当present被清除, Drity被设置时, 属于一个非线性磁盘文件映射)
+		设置标志
+			mk_pte_huge 设置PS与P位
+			pte_wr/rd/exprotect/ pte_mkclean/old  清除标志
+			pte_mkwrite/read/exec/dirty/young 设置标志位
+			pte_modify 页表项所有访问权限设置为
+			ptep_set_wrprotect 作用与指向页表项指针功能与pte_wrproct类似
+			ptep_set_access_flags 如果dirty标志位1, 将页存取权限设置指定值, 并调用flush_tlb_page
+			ptep_mkdirty 作用与指向页表项指针功能与pte_mkdirty类似
+			ptep_test_and_clear_dirty 作用与指向页表项指针功能与pte_mkdclean类似, 并返回dirty标志
+			ptep_test_and_clear_young 作用与指向页表项指针功能与pte_mkold类似, 并返回accessed标志
+		对页表操作的宏
+			pgd/pud/pmd_index 找到线性地址addr对应的目录项中的索引
+			pgd_offset 接收内存地址描述符mm, 和线性地址addr为参数, 产生addr在页全局目录中相应表项的线性地址
+				通过内存描述符中的一个指针找到页全局目录
+			pgd_offset_k 产生主内核也全局目录总的某个线性地址, 该项对应于地址addr
+			pgd_page 通过页全局目录项pgd, 产生页上级目录所在页框的页描述符地址, 在2/3级分页中等价于pud_page
+			pud_offset 接收页全局目录项指针pgd, 和线性地址addr为参数, 产生addr在页上级目录中相应表项的线性地址
+			pud_page 通过页上级目录项pud产生页中间目录线性地址, 在2分页中等价于pmd_page
+			pmd_offset 接收页上级目录项指针pud, 和线性地址addr为参数, 产生addr在目录项中相应表项的线性地址
+			pmd_page 通过页中间目录项pmd产生对应页表描述符地址, 在2/3级分页系统中, pmd实际上是页全局目录中一项
+			mk_pte 接收页描述符地址p和一组存取权限prot作为参数并创建相应的页表项
+			pte_offset_map 接收向一个页中间目录项指针dir和线性地址addr, 产生与线性地址addr相应的页表项的线性地址
+				如果页表被保存在高端内存中, 那么建立一个临时内核映射, 并用pte_unmap进行释放,
+				pte_offset_mao_nested, pte_unmap_nested这两个宏功能相同但使用不同内核映射
+			pte_page 返回页表项x所引用页的描述符地址
+			pte_to_pgoff 从一个页表项pte字段内容提取出文件偏移量, 偏移量对应着一个非线性文件内存映射所在页
+			pgoff_to_pte 为非线性文件内存映射所在的页创建对应页表项的内容
+		页分配函数
+			pgd_alloc 分区一个全新的页全局目录, 如果PAE被激活, 还分配三个对应用户态线性地址的子页中间
+			pgd_free 释放页全局目录地址为pgd的项, 如果PAE被激活, 释放用户态线性地址对应的三个页中间目录
+			pud/pmd_alloc, pud/pmd_free
+			pte_alloc_map, pte_free 返回与addr对应的页表项地址, 如果页中间目录项为空,
+				则调用pte_alloc_one分配一个新页表, 如果分配一个新页表, addr对应的项被创建
+			pte_alloc_kernel, pte_free_kernel 主内核使用
+	物理内存布局
+		内核将下列页框记为保留
+			在不可用的物理地址范围内的页框
+			含有内核代码和已初始化的数据结构的页框
+		保留页框决不能动态分配或交换到磁盘上
+		内核一般安装在RAM中从物理地址0x00100000开始, 从第二个MB开始
+			页框0由bios使用, 存放加电自检等配置, 初始化后数据写到页框中
+			0x000a0000~0x000fffff通常留给bios例程, 并且映射ISA图形卡上的内部内存, IBM兼容PC上从640KB~1MB之间著名的洞
+			第一个MB内的其他页框可能由特定计算机模型保留, 如0xA0~0x9F页框给IBM THinkpnd使用
+			启动过程的早期阶段, 询问BIOS并了解物理内存的大小, 内核调用BIOS过程建立一组物理地址范围及对应类型
+		随后执行machine_specific_memory_setup, 建立物理地址映射, 如果可获取则在BIOS基础上构建, 否则缺省构建
+		0x9F~0x100号所有页框标记为保留
+		128MB RAM配置
+			0x00000000~0x0009FFFF Usable
+			0x000F0000~0x000FFFFF Reserved
+			0x00100000~0x07FEFFFF Usable
+			0x07FF0000~0x07FF2FFF ACPI data	存有加电自检阶段由BIOS写入的系统硬件设备信息
+			0x07FF3000~0x07FFFFFF ACPI NVS	映射到硬件ROM芯片
+			0xFFFF0000~0xFFFFFFFF Reserved	由硬件映射到BIOS的ROM芯片
+			0x000A0000~0x000EFFFF BIOS并不提供信息, Linux假定不可用
+		machine_specific_memory_setup --> setup_memory(分析物理内存区域, 并初始化一些变量描述内核的物理内存布局)
+			num_physpages	最高可用页框号
+			totalram_pages	可用页框总数量
+			min_low_pfn		RAM中在内核映像后第一个可用页框号
+			max_pfn			最后一个可用页框号
+			max_low_pfn		被内核直接映射的最后一个页框号(低地址内存)
+			totalhigh_pages	内核非直接映射的页框总数
+			highstart_pfn	内核非直接映射的第一个页框号
+			highend_pfn		内核非直接映射的最后一个页框号
+		内核符号
+			_text(内核代码开始)~_etext(内核代码结束位置, 初始化过数据)~_edata(未初始化数据)~_end
+			编译内核时产生, System.map找到符号的线性地址
+	进程页表
+		0x00000000~0xBFFFFFFF	内核态和用户态均可访问(进程运行在用户态时, 产生线性地址范围)
+		0xC0000000~0xFFFFFFFF	内核态访问(进程运行在内核态时, 产生线性地址范围)
+			3GB ~ 3GB + 896MB <--> 0 ~ 896MB 物理地址
+			3GB + 896MB ~ 4GB 实现非连续分配内存和固定映射
+		PAGE_OFFSET值为0xC0000000, 进程在线性地址中的偏移量, 内核空间开始
+		页全局目录的第一部分页表项映射的线性地址小于PAGE_OFFSET(共1024项, PAE未启用时前768项, 启用后为前3项, 剩余的表项对所有进程相同)
+	内核页表
+		1.对内核的数据结构进行管理
+		2.页表部分作为参考模型
+		临时页全局目录, 在内核编译过程中静态初始化, 由startup_32函数临时页表
+			临时页全局目录放在swapper_pg_dir变量中, 临时页表在pg0变量处开始存放, 紧接着在_end后
+		内核代码段和数据段, 初始化页表和128KB内存范围能容纳于RAM前8MB, 需要用两个页表映射(2*1024*4K = 8MB(一个页表1024项))
+		第一阶段
+			允许在实模式和保护模式下都能容易访问8MB, 内核创建映射
+			0x00000000~0x007FFFFF 通过与物理地址相同的线性地址进行访问
+			0xC0000000~0xC07FFFFF --> 0x00000000~0x007FFFFF 通过0xC0000000~0xC07FFFFF线性地址进行访问
+			内核通过把swapper_pg_dir所有项都填充为0来创建期望的映射, 不过0, 1, 0x300(Dec 768), 0x301这四项除外, 后两项包含0xC0000000~0xC07FFFFF映射全部映射
+				1.0项和0x300项的地址字段置为pg0的物理地址, 而1项和0x301的地址字段置为紧随pg0后的页框的物理地址
+				2.四个项中的P, R/W, U/S置位. A, D, PS, PWT, PCD位清零
+			startup_32启用分页单元, 通过向CR3控制寄存器装入swapper_pg_dir的地址及设置PG标志达到目的
+	RAM小于896MB最终内核页表
+		内核页表所提供的最终映射从0xC0000000开始的线性地址转化为从0开始的物理地址
+		__pa把从PAGE_OFFSET开始的线性地址转换为物理地址, __va物理地址转换为线性地址
+		主内核页全局目录任然保存在swapper_pg_dir变量中, 有paging_init函数初始化
+			1.调用pagetable_init适当建立页表项
+			2.把swapper_pg_dir的物理地址写入CR3控制寄存器中
+			3.如果CPU支持PAE且编译选项支持PAE, 将CR4控制寄存器的PAE标志置位
+			4.调用__flush_tlb_all使TLB的所有项无效
+		RAM小于896MB, 无需激活PAE循环初始化, pgd = swapper_pg_dir + pgd_index(PGAE_OFFSET) /* 第768项 */
+			P90
+		假定CPU支持4MB页, 和全局TLB表项U/S位清零拒绝用户态进程访问, PS置位可以使用大型页对RAM寻址,
+		startup_32创建的物理内存前8MB恒等映射完来完成初始化后, 这种映射不需要时, 调用zap_low_mappings清除对应的页表项
+	RAM大小896MB~4096MB之间的最终内核页表
+			并不把RAM全部映射到内核地址空间, 在初始化阶段最好把一个具有896MB的RAM窗口映射到内核线性地址空间,
+		如果一个程序需要对现有RAM的其余部分寻址, 必须把某些其他的线性地址间隔映射到所需的RAM, 即动态重映射
+	RAM大于4096MB最终内核页表
+		RAM大于4GB时以下情况
+			1.CPU支持物理地址扩展PAE
+			2.RAM容量大于4GB
+			3.内核以PAE支持来编译
+			尽管PAE是处理36位物理地址, 但线性地址依然是32位, 映射一个896MB的RAN窗口到内核线性地址空间, 剩余RAM留着不映射
+		并由动态重映射处理
+			P91
+			页全局目录中的前三项与用户线性地址空间相对应, 用一个空页(empty_zero_page)的地址对这三项初始化
+		第四项用页中间目录(pmd)初始化, 调用alloc_bootmem_low_pages分配(前448项用RAM前896MB填充(有512项但后64项给非连续内存分配和固定映射))
+		然后页全局目录的第四项被拷贝到第一项中, 好为线性地址空间的前896MB中的低物理内存映射作为镜像, 当映射不必要时调用zap_low_mappings清除
+	固定映射的线性地址
+		内核线性地址第4个GB的初始化部分映射系统的物理内存, 至少128MB的线性地址总是留作他用, 内核是使用这些线性地址实现非连续内存分配和固定映射
+			固定的线性地址类似0xFFFFC000的常量地址, 其对应的物理地址不必等于线性地址减去0xC0000000, 而是可以通过任意方式建立
+		每个固定映射的线性地址都映射一个物理内存的页框, 固定线性地址存放在线性地址第4个GB的末端, 定义在enum fixed_addresses, fix_to_virt计算
+		从给定索引开始的常量线性地址
+			为了把一个物理地址与固定映射的线性地址关联, 使用set_fixmap和set_fixmap_nocache宏, 把线性地址对应的一个页表项初始化为物理地址phys
+		第二个函数将页表项PCD标志置位, 当访问页框中的数据时禁用硬件告诉缓存, 使用clear_fixmap撤销固定线性地址与物理地址的关联
+	处理硬件高速缓存
+		为了让高速缓存命中率达到最优化, 采用以下策略
+			1.一个数据结构中最常用的字段放在该数据结构内的低偏移部分, 以便能够处于高速缓存同一行中
+			2.当为一组大数据结构分配空间时, 试图将它们存放在内存中, 以便所有高速缓存行按同一方式处理
+	TLB
+		处理器不能自动同步它们自己的TLB高速缓存, 内核提供适当时机运用TLB刷新方法
+			格式: 方法名称 说明 使用时机
+			flush_tlb_all 刷新所有TLB表项 改变内核页表项时
+			flush_tlb_kernel_rang 刷新给定线性地址范围内所有TLB表项 更换一个范围内的内核页表项
+			flush_tlb 刷新当前进程拥有的非全局页相关的所有TLB表项 进程切换时候
+			flush_tlb_mm 刷新指定进程拥有的非全局页相关的所有TLB表项 创建一个新的子进程时
+			flush_tlb_mm_range 刷新指定进程的线性地址间隔对应的TLB表项 释放某个进程的线性地址间隔时
+			flush_tlb_pgtables 刷新指定进程中特定的相临页表集相关的TLB表项 释放进程的一些页表时
+			flush_tlb_page 刷新指定进程中单个页表项相关的TLB表项 处理缺页异常时
+		intel只提供两种使TLB无效的技术
+			1.向CR3寄存器写入值时所有Pentium处理器自动刷新相对于非全局页的TLB表项
+			2.在Pentium Pro及以后处理器中, invlpg汇编语言指令使映射指定线性地址单个TLB表项无效
+		采用刷新TLB中宏, 实现独立于系统的方法不刷
+			格式: 宏名称 描述 使用对象1, 使用对象2, ...
+			__flush_tlb 将CR3寄存器当前的值重新写回CR3 flusb_tlb, flusb_tlb_mm, flush_tlb_range
+			__flush_tlb_global 清除CR4的PGE标志禁用全局页, 将CR3值重新写回CR3, 并在次设置PGE标志 flush_tlb_all, flush_tlb_kernel_rang
+			__flush_tlb_single 以addr为参数执行invlpg汇编语音指令 flush_tlb_page
+			x86系统中无flush_tlb_pgtables, 所以实现这个方法函数为空
+		一般来说进程切换更换活动页表, 相对于过期页表, 本地TLB必须刷新, 将新的pgd地址写入CR3中自动完成, 不过在以下情况避免TLB刷新
+			1.两个使用相同页表集的普通进程之间执行进程切换时
+			2.当一个普通进程和一个内核线程间执行进程切换时
+			3.当某个用户态进程分配页框并将它的物理地址存入页表项时
+		为了避免无用的TLB刷新, 采用懒惰TLB模式技术, 几个CPU使用相同页表, 必须对这些CPU上的TLB表项刷新, 那么运行内核线程的CPU可以延迟刷新
+		内核线程并不拥有自己的页表集, 它使用普通进程的页表集, 没必要使一个用户态线性地址对应的TLB表项无效, 因为内核线程不访问内核地址空间
+			当某个CPU运行内核线程时, 将置为懒惰TLB, 当发出清除TLB表项请求时, 处于懒惰TLB模式的CPU不刷新相应表项,
+		但CPU记住当前进程正在运行在一组页表上, 而这组页表的TLB表项对用户态地址是无效, 只要处于懒惰TLB模式的CPU
+		用一个不同的页表集切换到一个普通进程, 硬件自动刷新, 同时把CPU设为非懒惰TLB, 然而, 如果处于懒惰TLB的CPU
+		切换到的进程与刚才运行的内核线程拥有相同的页表集, 那么任何使TLB无效的延迟操作必须由内核有效地实施,
+		这种操作可以通过刷新CPU所有非全局TLB项有效获取
+		懒惰TLB模式数据结构
+			cpu_talbstate 变量是一个具有NR_CPUS个结构的静态数组, 默认32, 有两个字段
+				1.指向当前进程内存描述符的active_mm字段
+				2.具有两个状态值的state字段: TLBSTATE_OK, TLBSTATE_LAZY
+				此外内存描述符中包含一个cpu_vm_mask字段, 该字段存放的是CPU(这些CPU将要接收与TLB刷新相关的处理器间中断)下标,
+			只有内存描述符属于当前运行进程时才有意义
+		流程
+				执行内核线程, cpu_talbstate中state字段置为TLBSTATE_LAZY, 此外活动内存描述符(用户mm_struct)的cpu_vm_mask存放系统中所有CPU的下标
+			当另一个CPU想使这些表项无效时, 该CPU就把一个处理器间中断发送给下标处于对应内存描述符的cpu_vm_mask字段中的CPU,
+				当CPU接收到一个与TLB刷新相关的处理器间中断, 并验证它影响当前进程的页表集时, 检查是否处于懒惰, 如果处于懒惰模式, 拒绝TLB表项刷新
+			并从内存描述符中cpu_vm_mask字段删除该CPU下标, 这有两种结果
+				1.CPU处于懒惰模式, 将不接受其他与TLB刷新相关的处理器间中断
+				2.如果CPU切换到另一个进程, 而这个进程与刚被替换的内核线程使用相同的页表集, 调用__flush_tlb使该CPU的所有非全局TLB表项无效
+
+进程
+	进程描述符
+		struct task_struct
+		能被独立调度的每个执行上下文都必须拥有自己的进程描述符, 进程和进程描述符之间一一对应
+		用户使用进程标识符PID标识进程, 缺省情况下最大PID_MAX_DEFAULT - 1, /proc/sys/kernel/pid_max
+		到上限值, 开始循环使用已闲置的小PID号
+	进程状态
+		可运行(TASK_RUNNING)
+			在CPU上执行/准备执行
+		可中断等待状态(TASK_INTERRUPTIBLE)
+			进程被挂起(睡眠), 直到某个条件变为真, 产生一个硬件中断, 释放进程正等待的系统资源/一个信号唤醒进程, 将进程状态设置为可运行
+		不可中断等待状态(TASK_UNINTERRUPTIBLE)
+			  基本与可中断状态类似, 但不同于可中断状态, 把信号传递到睡眠进程不能改变状态, 通常当一个进程打开一个设备文件时,
+			驱动程序探测设备完成之前均为这种状态(驱动程序不可被中断), 否则硬件设备处于不可预知状态
+		暂停状态(__TASK_STOPPED)
+			进程执行被暂停, 当接收到SIGSTOP, SIGSTP, SIGTTIN, SIGTTOU进入暂停状态
+		跟踪状态(TASK_TRACED)
+			进程执行由debugger程序暂停, 当一个进程被另一个进程监控时, 任何信号可以把这个进程置于TASK——TRACED状态
+		有两个进程状态既可以存放在进程描述符state字段中, 也可以存放在exit_state字段中, 当进程执行被终止时, 状态变为两种中的一种
+		僵死状态(EXIT_ZOMBIE)
+			  进程执行被终止, 但父进程没发布wait4()/waitpid()系统调用来返回有关死亡进程信息, 发布wait()类系统调用前,
+			内核不能丢弃包含在描述符中的数据, 因为父进程可能需要它
+		僵死撤销状态(EXIT_DEAD)
+			由父进程发出wait4/waitpid()系统调用, 进程由系统删除, 防止其他执行线程在同一个进程上也执行wait系统调用
+		设置进程状态(保证编译程序或CPU不把赋值操作与其他指令混合, 不乱序执行)
+			set_current_state
+	PID号管理
+		管理一个pidmap_array位图表示当前已分配PID号和闲置PID号
+		一个页框包含32768个位(一个页框4K = 4096B = 4096 * 8位), 所以32位系统位图存放在一个单独页中
+		linux把不同的PID号与系统中每个进程或轻量级进程相关联, 使得每个执行上下文唯一被识别, 另一方面希望同一组线程拥有共同PID, 引入线程组
+		线程组中所有线程使用同一个PID号, 存入进程描述符tgid字段中, getpid()系统调用返回当前进程的tgid号
+	进程描述符处理
+		  内核把进程描述符放在动态内存中, 而不是永久分配在内核的内存区, 对于每个进程, linux把两个不同的数据结构紧凑的存放在一个单独为进程分配的存储区域内
+		一个是内核态的进程堆栈, 另一个是紧挨进程描述符的小数据结构thread_info(线程描述符), 这块存储区域通常为8192字节(两个页框), 8K空间连续占据两个空间
+		并让第一个页框起始地址是2^13的倍数, 当几乎没有可用的动态内存空间时, 很难知道两个了连续的页框, 因为空间存在大量碎片, 因此x86体系结构中, 编译时
+		可以进行设置, 已使内核栈和线程描述符跨越一个单独的页框(4K), 内核态的进程访问处于内核数据段的栈, 内核控制路径使用很少的栈, 因此只需要几千个字节
+		的内核堆栈, 所以堆栈和thread_info结构来说8K足够, 当使用一个页框存放内核堆栈和thread_info时, 内核采用一些额外的栈防止中断和异常的深度嵌套而溢出
+		  线程描述符驻留与内存区的开始, 栈从末端向下增长, esp寄存器是CPU栈指针, 用来存放栈顶单元的地址, 栈起始于末端, 并朝这个内存区开始的方向增长, 从
+		用户态刚切换到内核态后, 进程的内核栈总是空, 因此esp寄存器指向栈顶, 一旦数据写入堆栈, esp递减, thread_info是52B长, 因此栈扩展到8140B
+			union thread_union {
+				struct thread_info thread_info;
+				unsigned long stack[2048];
+			};
+		内核使用alloc_thread_info和free_thread_info宏分配和释放thread_info结构和内核栈的内存区
+		+-------------------------------+
+		| 栈(向下增长) | thread_info结构 |
+		+-------------------------------+
+		thread_info结构其中包含task字段(指向进程描述符基地址)
+	标识当前进程
+		  连续存放好处是esp寄存器的值获取当前在CPU上正在运行的进程thread_info结构的地址, 事实上, 如果thread_union的长度是8K(2^13), 则内核屏蔽掉低13位
+		可以获得thread_info的基地址, 如果thread_union长度是4K则屏蔽掉低12位, 由current_thread_info函数完成
+			current_thread_info()
+				movl $0xffffe000, %ecx /* 或者用于4K堆栈的0xffff f000 */
+				andl %esp, %ecx
+				movl %ecx, p
+			p包含在执行指令的CPU上运行进程的thread_info结构的指针
+		进程最常用的是进程描述符的地址而不是thread_info结构的地址, 为了获得当前在CPU上运行进程描述符的指针, 调用current宏, 宏等价于
+			current_thread_info()->task
+				movl $0xffffe000, %ecx /* 或者用于4K堆栈的0xffff f000 */
+				andl %esp, %ecx
+				movl (%ecx), p
+			task字段在thread_info结构中的偏移量为0, 所以p就是包含在CPU上运行进程的描述符指针
+		使用栈存放进程描述符优点在多处理器系统上, 每个硬件处理器仅通过检查栈可以获取当前进程, 在多处理器系统上, 把current定义为一个数组, 每一个元素对应CPU
+	进程链表
+		进程链表把所有进程描述符链接起来, 每个task_struct均包含list_head类型的tasks字段,  进程链表头是init_task描述符, 所谓的0进程或swapper进程的进程描述符
+		init_task的task.prev字段指向链表中最后插入的进程描述符的tasks字段
+		操作
+			SET_LINKS和REMOV_LINK宏分别从进程链表中插入和删除一个进程描述符, 并考虑进程间父子关系
+			for_each_process() 扫描整个进程链表
+	TASK_RUNNING状态的进程链表
+		当内核寻找一个新进程在CPU上运行时, 只考虑TASK_RUNNING状态的进程即可
+		  每种进程优先级对应一种链表, task_struct描述符包含一个list_head类型字段run_list, 如果进程优先级为K(共140优先级), 则放在优先级为k的可运行进程链表中
+		内核必须为每个运行队列保存大量的数据, 主要数据结构还是进程描述符, 所有链表都由一个单独的prio_array_t数据结构组成
+		struct prio_array_t
+			int nr_active 链表中进程描述符的数量
+			unsigned long[5] bitmap 优先级位图, 当且仅当某个优先级的进程链表不为空时设置对应的标志
+			struct list_head[140] queue 140个优先级队列的头结点
+		enqueue_task(p, array) 把进程描述符插入某个运行队列的链表
+		dequeue_task(p, array) 从运行队列的链表中删除一个进程描述符
+	进程描述符中描述亲属关系字段
+		real_parent 指向创建P的进程描述符, 如果p的父进程不存在, 则指向进程1(init)描述符
+		parent 指向p的当前父进程(这种进程的子进程终止时, 必须向父进程发信号), 通常与real_parent一致，当另一个进程发出监控p的ptrace不同
+		children 链表的头部, 链表中的所有元素都是p创建的子进程
+		sibling 指向兄弟进程链表中的下雨一个元素或前一个元素的指针, 这些兄弟进程的父进程都是p
+	进程描述符中描述非亲属关系的进程描述符
+		group_leader p所在进程组的领头进程的描述符指针
+		signal->pgrp p所在进程组的领头进程的PID
+		tgid p所在线程组队领头进程的PID
+		signal->session p的登录会话领头的PID
+		ptrace_children 链表头, 链表包所有被debugger程序跟踪的p的子进程
+		ptrace_list 指向所跟踪进程, 实际父进程链表的前一个和下一个元素
+	pidhash表和链表
+		加速查找pid, 引入4个散列表, 进程描述符包含了表示不同类型PID的字段
+		进程描述符中散列表的字段
+			PIDTYPE_PID 进程PID
+			PIDTYPE_TGID 线程组领头进程的PID
+			PIDTYPE_PGID 进程组领头的PID
+			PIDTYPE_SID 会话领头进程的PID
+		内核初始化期间, 动态为4个散列表分配空间, 并把他们的地址存入pid_hash数组, 一个系统拥有512MB的RAM, 那么散列表存在4个页框中, 可以拥有2048个表项
+		#define pid_hashfn(x) hash_long((unsigned long) x, pidhash_shift)
+			pidhash_shift 存放表的索引长度(以位为单位长度, 例如11)
+			pid_hashfn取值范围是0 ~ 2^11 - 1 = 2047
+			选取魔数常量0x9E370001 P112
+		hash冲突处理
+			利用链表处理冲突的PID, 每一个表项是由冲突的进程描述符组成的双向链表
+	进程描述符中PID结构字段
+		int nr pid的数值
+		struct hlist_node pid_chain 链接散列表的下一个和前一个元素
+		struct list_head pid_list 每个pid的进程链表头
+		例子(P113)
+			pid_hash[4] [1]为PIDTYPE_TGID 查找[1]找到TGID的hash表, 以第71项nr为4351和246进程为例
+				4351->pid_chain <--next/prev--> 246->pid_chain (散列表)
+				4351->pid_list <--next/prev--> 4351->pid_list <--next/prev--> 4351->pid_list (同一个线程组相同pid号)
+		PID散列表函数和宏
+			do_each_pid_task((nr, type, task)
+			while_each_pid_task(nr, type, task)
+					标记do-while循环的开始和结束, 循环作用在PID值等于nr的PID链表上, 链表的类型由参数type给出, task参数指向当前被
+				的元素的进程描述符
+			find_task_by_pid_type(type, nr)
+				在type类型的散列表中查找PID等于nr的进程, 函数返回所有匹配的进程描述符指针, 若没匹配则返回NULL
+			find_task_by_pid(nr)
+				find_task_by_pid_type(PIDTYPE_PID, nr)
+			attach_pid(task, type)
+					把task指向的进程描述符插入type类型的散列表中, 如果一个进程描述符已经在散列表中, 把task插入已有的PID进程链表中
+			detach_pid(task, type)
+				  从type类型的散列表中删除task所指向的进程描述符, 如果删除后PID进程链表没有变为空, 则函数终止,
+				否则, 该函数还要从type类型的散列表中删除进程描述符, 最后, 如果PID的值没有出现在任何其他散列表中
+				为了这个值被反复利用, 必须清楚PID位图中的相应位
+			next_thread(task)
+				  返回PIDTYPE_TGID类型的散列表链表中task指示的下一个轻量级进程的进程描述符,
+				由于散列表是循环的, 若应用于传统的进程, 那边该宏返回进程本身的描述符地址
+	如何组织进程
+		运行队列链表把处于TASK_RUNNING状态的所有进程组织在一起, 当要把其它状态的进程分组时, 不同的状态要求不同的处理
+			没有为处于TASK_STOPPED, EXIT_ZOMBIE, EXIT_DEAD状态的进程建立专门的链表, 由于对处于暂停, 僵死, 死亡状态的
+		进程的访问比较简单, 或者通过PID, 或者通过特定的父进程的子进程链表, 所以不必对这三种状态的进程分组
+	等待队列
+			进程必须经常等待某些事件发生, 如等待磁盘操作终止, 等待资源释放, 或等待时间经过固定的间隔
+		希望等待特定事件的进程把自己放进合适的等待队列, 并放弃控制权, 因此, 等待队列表示一组睡眠进程
+		但某一条件变为真时, 由内核唤醒
+		双向链表实现, 元素包括指向进程描述符的指针, 每个等待队列都有一个等待队列头, 头类型为wait_queue_head_t数据结构
+		typedef struct __wait_queue_head {
+			spinlock_t lock;
+			struct list_head task_list;
+		}wait_queue_head_t;
+		typedef struct __wait_queue {
+			unsigned int flags;
+			strcut task_struct *task;
+			wait_queue_func_t func;
+			struct list_head task_list;
+		}wait_queue_t;
+		因为等待队列是由中断处理程序和主要内核函数修改, 因此必须对其双向链表进行保护
+		两种睡眠进程:
+			互斥进程(等待队列元素的flags字段为1)由内核有选择地唤醒, 等待访问临界资源
+			非互斥进程(flags字段为0)总是由内核在事件发生时唤醒, 等待相关事件
+		操作
+			DECLARE_WAIT_QUEUE_HEAD(name) 静态定义一个新等待队列的头, 并初始化lock和task_list
+			init_waitqueue_head(q, p) 动态初始化等待队列头, 非互斥进程p将由default_wake_function唤醒
+				q->flags = 0; q->task = ; q->func = default_wake_function;
+			DEFINE_WAIT() 建立等待队列项, 当前进程的描述符和唤醒函数autoremove_wake_function的地址初始化
+					autoremove_wake_function函数调用default_wake_function()唤醒睡眠进程, 从等待队列链表中
+				删除一个元素(每个等待队列链表中的一个元素其实是指向睡眠进程描述符指针), 最后通过
+				init_waitqueue_func_entry函数来自定义唤醒函数, 该函数辅助初始化等待队列的元素
+			add_wait_queue/_exclusive() 把一个非互斥进程插入等待队列链表的第一个位置/最后一个位置
+			remove_wait_queue() 从等待队列链表中删除一个进程
+			waitqueue_active() 检查一个给定的等待队列是否为空
+			sleep_on/_time() 对当前进程进行操作, 定义一个时间, 过了这个时间后, 由内核唤醒, 使用schedule_timout调度
+					把当前进程的状态设置为TASK_UNINTERRUPTIBLE, 并把它插入特定的等待队列, 当睡眠进程被唤醒时
+				把该进程从等待队列中删除
+			interruptible_sleep_on/_timeout() 对当前进程进行操作, 将状态设置为TASK_INTERRUPTIBLE
+			prepare_to_wait/_exclusive() finish_wait()
+					使当前进程在一个等待队列中睡眠, 用第三个参数设置进程状态, 把互斥标志设置, 并插入到wq的队列中
+					唤醒后后, 执行finish_wait()函数, 将状态设置为TASK_RUNNING, 并从等待队列中删除
+			wait_event/_interruptible() 使调用进程在等待队列上睡眠, 一直到修改给定条件为止
+				prepare_to_wait之后检查条件原因: 加入队列后检查条件是否满足, 如果不检查可能条件满足, 直接睡眠, 无法唤醒
+				sleep_on类函数在以下条件下不能使用, 那是必须测试条件并且当条件还没得到验证时,
+			加入队列后, 如果不检查, 可能条件已经满足, 再去睡眠则后续无法唤醒
+				为了把一个互斥进程插入等待队列, 必须使用prepare_to_wait_exclusive或直接调用add_wait_queue_exclusive
+			所有其他的相关函数把进程当作非互斥进程来插入, 最后除非使用DEFINE_WAIT或finish_wait, 否则内核必须在唤醒后
+			从等待队列中删除对应的等待队列元素
+			wake_up/_nr/_all/_locked() wake_up_interruptible/_nr/_all/_sync()
+				1.所有宏唤醒具有请求状态的所有非互斥进程
+				2.所有宏考虑到处于所有状态的睡眠进程
+				3.名称含nr的宏唤醒给定数的具有请求状态的互斥进程, all唤醒所有进程, 不含字段唤醒一个互斥进程
+				4.不含sync宏, 检查被唤醒进程的优先级是否高于系统中正在运行进程的优先级, 必要时调用schedule()
+				5.含有locked宏, 当自旋锁已经被持有时调用wake_up_locked
+					wake_up函数list_for_each扫描等待队列中所有进程, 对每一项查找等待队列元素, 如果进程被有效唤醒
+				并且进程是互斥, 循环结束, 所有的互斥进程在链表的尾部, 所以总是先唤醒非互斥进程在唤醒互斥进程
+	进程资源限制
+		  每个进程都有一组相关的资源限制, 限制指定了进程能使用的系统资源数量, 避免用户过分使用系统资源
+		当前进程的资源限制存放在current->signal->rlim字段, 类型是rlimit结构数组, 每个资源限制对应一个元素
+		struct rlimit {
+			unsigned long rlim_cur;
+			unsigned long rlim_max;
+		};
+		rlim_cur是资源当前资源限制, 如current->signal->rlim[RLIMIT_CPU], 表示正在运行进程所占用CPU时间的当前限制
+		RLIMIT_AS 进程地址空间的最大数(字节为单位), 进程使用malloc或相关函数扩大它的地址空间时, 内核检查这个值
+		RLIMIT_CORE   内存信息转储文件的大小(字节单位), 当一个进程异常终止时, 内核在进程的当前进程目录下创建内存信息
+					转储文件之前检查这个值, 如果限制为0, 则不创建这个文件
+		RLIMIT_CPU 进程使用CPU的最长时间(秒为单位), 进程超过这个限制, 内核就向它发一个SIGCPU信号, 如果进程还不终止发送SIGKILL信号
+		RLIMIT_DATA 堆大小的最大值(字节为单位), 扩充进程堆之前内核检查这个值
+		RLIMIT_FSIZE 文件大小的最大值(字节为单位), 如果进程试图把一个文件的大小扩充到大于这个值, 内核给这个进程发SIGXFSIZ信号
+		RLIMIT_LOCKS 文件锁的最大值
+		RLIMIT_MEMLOCK 非交换内存的最大值(字节为单位), 当进程试图通过mlock或mlockall系统调用锁住一个页框时, 内核检查这个值
+		RLIMIT_MSGQUEUE POSIX消息队列中的最大字节数
+		RLIMIT_NOFILE 打开文件描述符的最大是, 当打开一个新文件或复制一个文件描述符时, 内核检查这个值
+		RLIMIT_NPRPC 用户能拥有的进程最大数
+		RLIMIT_RSS 进程所拥有的页框最大数
+		RLIMIT_SIGPENDING 进程挂起信号的最大数
+		RLIMIT_STACK 栈大小的最大值(字节为单位), 内核扩充进程的用户态栈之前检查这个值
+		  rlim_max字段是资源限制所允许的最大值, 利用getrlimit()和setrlimit()系统调用, 用户总能把一些资源的rlim_cur限制增加到rlim_max
+		只有超级用户(CAP_SYS_RESOURCE权限的用户)才能改变rlim_max字段或把rlim_cur字段设置大于rlim_max的值
+		  大多数资源限制包含值RLIMIT_INFINITY, 没有对相应的资源施加用户限制, 然而, 系统管理员可以给一些资源选择施加更强的限制,只要用户
+		注册进系统, 内核创建一个由超级用户拥有的进程, 超级用户能调用setrlimit()以减少一个资源字段, 随后同一个进程执行一个login shell
+		该进程变为由用户拥有, 用户创建的每个新进程都继承其父进程rlim数组内容
+	进程切换
+		硬件上下文
+			  恢复一个进程执行之前, 内核必须确保每个进程装入了挂起进程时的值, 进程恢复执行前必须装入寄存器的一组数据成为硬件上下文,
+			硬件上下文是进程可执行上下文的一个子集, 可执行上下文包含进程执行时需要的所有信息, 硬件上下文一部分存在TSS段中,
+			剩余存放在内核堆栈
+			  假定用prev局部变量表示切换出的进程描述符, next表示切换进的进程描述符, 保存prev硬件上下文, 用next硬件上下文替代prev
+			使用far jmp指令(既修改CS寄存器, 也修改eip寄存器, jmp只能修改eip寄存器)跳到next进程TSS描述符的选择符来执行进程切换,
+			执行这条指令时, CPU通过自动保存原来的硬件上下文, 后续采用软件执行进程切换
+				1.通过一组mov指令逐步执行切换, 控制所装入数据的合法性, 检查ds和es段寄存器成为可能, 使用far jmp不进行检查
+				2.新旧两种方法时间大致相同, 然而尽管当前的切换代码还有改进的余地, 却不能对硬件上下文切换进行优化
+			  进程切换发生在内核态, 执行进程切换之前, 用户态进程使用的所有寄存器内容都已保存在内核态堆栈上, 这也包括ss和esp
+			寄存器的内容(存储用户态堆栈指针的地址)
+		任务状态段
+			TSS(任务状态段)来存放硬件上下文, linux不使用硬件上下文切换, 强制为系统中每个不同的CPU创建一个TSS, 原因
+				1.从用户态切换到内核态, 从TSS中获取内核态堆栈的地址
+				2.用户态试图通过in或out执行指令时, CPU需要访问存放在TSS中的IO许可权位图以检查进程是否有访问端口权限
+					2.1 检查eflags寄存器中的2位IOPL字段, 如果字段为3, 执行IO指令, 否则执行下一个检查
+					2.2 访问tr寄存器确定当前的TSS和相应的IO许可权位图
+					2.3   检查IO指令中指定的IO端口在IO许可权位图中对应的位, 如果该位清0, 这条IO指令就执行,
+						否则产生一个"General protection"异常
+			  struct tss_strcut 结构描述TSS的格式, init_tss数组为系统上每个不同的CPU存放一个TSS, 每次进程切换时, 内核更新
+			TSS的某些字段一边相应的CPU控制单元可以安全地检索到它需要的信息, 因此TSS反映了CPU上当前进程的特权级
+			  每个TSS有它自己8字节的任务状态段描述符(TSSD), 这个描述符包括指向TSS起始地址的32位Base字段, 20位Limit字段, TSSD的
+			S标志位被清0, 以表示相应的TSS是系统段的事实
+			  Type字段置为11或9表示这个段实际上是一个TSS, Type字段的第二个有效位叫Busy位, 如果进程正由CPU执行, 则置为1, 否则为0
+			在linux设计中, 每个CPU只有一个TSS因此, Busy总为1
+			  linux创建的TSSD存放在全局描述符表中(GDT), GDT的基地址存放在每个CPU的gdtr寄存器中, 每个CPU的tr寄存器包含相应的
+			TSS, TSSD选择符存放在GDT某一个表项中, 也包含了两个隐藏的非编程字段: TSSD的Base字段和Limit字段, CPU直接对TSS寻址而不用从GDT中检索TSS地址
+			  任务切换时, 处理器中各寄存器的当前值被自动保存到TR(任务寄存器)所指向的TSSD代表的TSS中, 然后, 下一任务的TSS的TSSD被装入TR,
+			最后, 从TR所指定的TSSD代表的TSS中取出各寄存器的值送到处理器的各寄存器中
+		thread段
+			  每次进程切换时, 被替换进程的硬件上下文必须保存在别处, linux保存在thread_struct类型的thread字段, 只要进程被切换出去,
+			内核就把其硬件上下文保存在这个结构中
+		执行进程切换
+			1.切换页全局目录以安装一个新的地址空间
+			2.切换内核态堆栈和硬件上下文, 硬件上下文提供内核执行新进程所需要的所有信息, 包含CPU寄存器
+			假定prev指向被替换的进程描述符, next指向被激活的进程描述符, prev和next是schedule()的局部变量
+			switch_to宏
+				  进程切换的第二步由switch_to执行, 宏有三个参数prev, next和last, prev和next是占位符, 输入参数
+				表示替换进程和新进程的地址在内存中的位置, 参数last, 在任何进程切换中, 涉及到三个进程而不是两个
+				  假设暂停A激活B, 在schedule函数中, prev指向A, next指向B, switch_to一旦让A暂停, A的执行流就被冻结,
+				随后想再次激活A, 必须暂停另一个进程C(不同于B), 于是prev指向C而next指向A来执行另一个switch_to宏, 当A
+				恢复时, A的内核栈中prev指向A, next指向B, 进程A执行的内核失去对C的引用
+				  最后一个参数last是输出参数, 在进程切换之前宏把第一个输入参数prev表示的变量存入CPU的eax寄存器中,
+				完成进程切换, A恢复执行后, 将eax的内容写入到第三个参数last中
+				内核代码执行的步骤类似如下
+					1.eax和edx分别保存prev和next值
+						movl prev, %eax
+						movl next, %edx
+					2.把eflags和ebp寄存器的内容保存在prev内核栈中, 必须保存它们的原因是编译器认为在切换结束之前值保持不变
+						pushf1
+						pushl %ebp
+					3.把esp的内容保存到prev->thread.esp中是该字段指向prev内核栈的栈顶
+						movl %esp,484(%eax) /* 484(%eax)表示内存单元地址在eax内容上 + 484 */
+					4.  把next->thread.esp装入esp, 此时切换至next的内核栈上,
+					  但ebp寄存器未修改, 还是prev进程, 所有局部变量均为prev进程中(局部变量根据ebp偏移索引)
+						movl 484(%eax), %esp
+					5.把标记为1的地址存入prev->thread.eip, 当被替换的进程重新恢复时, 执行标记为1的指令
+						movl $1f, 480(%eax)
+					6.把next->thrad.eip压入next的内核栈
+						pushl 480(%edx)
+					7.跳转__switch_to执行, jmp通过寄存器传递参数eax(prev), edx(next)
+						jmp __switch_to
+					8.再次切换回进程prev时, 执行标记为1的指令
+						1:
+							popl %ebp
+							popfl
+					9.拷贝eax寄存器的内容到switch_to宏的第三个参数last中
+						movl %eax, last
+
+			__switch_to函数
+				eax和edx分别保存prev和next, 利用__attribute__和regparm关键字强迫函数从寄存器取参数
+				__switch_to(struct task_struct *prev_p, struct task_struct *next_p) __attribute__(regparm(3));
+				1.执行由__unlazy_fpu宏产生的代码, 有选择地保存prev_p进程的FPU, MMX, XMM寄存器的内容
+					__unlazy_fpu(prev_p)
+				2.执行smp_processor_id宏获得当前CPU, 从当前进程的thread_info结构的cpu字段获得下标并保存到cpu局部变量中
+				3.  把next_p->thread.esp0装入对应于本地CPU的TSS的esp0字段, 以后任何由sysenter汇编指令产生user到kernel切换
+				  将把这个地址拷贝到esp寄存器中
+					init_tss[cpu].esp0 = next_p->thread.esp0
+				4.把next_p进程使用的线程局部存储(TLS)段装入本地CPU的全局描述符表, 三个段选择符在进程描述符的tls_array数组中
+					cpu_gdt_table[cpu][6] = next_p->thread.tls_array[0];
+					cpu_gdt_table[cpu][7] = next_p->thread.tls_array[1];
+					cpu_gdt_table[cpu][8] = next_p->thread.tls_array[2];
+				5.把fs和gs段寄存器的内容分别存放在prev_p->thread.fs和prev_p->thread.gs中
+					movl %fs, 40(%esi)
+					movl %gs, 44(%esi)
+				6.  如果fs或gs段寄存器已经被prev_p和next_p进程中任意一个使用, 则将next_p进程的thread_struct描述符中
+				  保存的值装入这些寄存器中, ebx寄存器指向next_p->thread结构, 实际代码更复杂, 当检测到一个无效
+				  的段寄存器值时, CPU可能产生一个异常, 采用一种"修正"途径考虑这种情况
+					movl 40(%ebx), %fs
+					movl 44(%ebx), %gs
+				7.  用next_p->thread.debugreg数组的内容装载dr0 ... dr7的6个调试寄存器, 只有在next_p被挂起时才真正使用
+				  调试寄存器(next_p->thread.debugreg[7] != 0), 这种操作才能进行, 只有当一个调试器想要监控prev时prev_p->
+				  thead.debugreg才会被修改
+				8.  如果必要, 更新TSS中的I/O位图, 当next_p/prev_p有其自己定制I/O权限位图时必须这么做, 因为进程很少修改I/O权限位图
+				  所以该位图在懒模式中被处理, 当且仅当一个进程在当前时间片内实际访问I/O端口时, 真实位图才被拷贝到本地CPU的TSS, 进程
+				  的定制I/O权限位图被保存在thread_info结构的io_bitmap_ptr字段指向的缓冲区中, handle_io_bitmap函数为next_p进程设置
+				  本地CPU使用的TSS的io_bitmap字段如下
+					*.如果next_p进程不拥有字段I/O权限位图, 则TSS的io_bitmap字段被设为0x8000
+					*.如果next_p进程拥有自己的I/O权限位图, 则TSS的io_bitmap字段被设为0x9000
+					则TSS的io_bitmap字段应当包含一个在TSS中的便宜点, 其中存放实际位图, 无论何时用户态进程试图访问一个I/O端口, 0x8000
+				  和0x9000指向TSS界限之外并将因此引起"General protection"异常, do_general_protection()异常处理程序将检查保存在io_bitmap
+				  字段的值, 如果是0x8000函数发送一个SIGSEGV信号给用户态进程, 如果是0x9000函数把进程位图(thread_info结构中的io_bitmap_ptr)
+				  拷贝到本地CPU的TSS中, 把io_bitmap字段设为实际位图的偏移, 并强制再一次执行有缺陷的汇编指令
+
+					if (prev_p->thread.io_bitmap_ptr || next_p->thread.io_bitmap_ptr)
+						handle_io_bitmap(&next_p->thead, &init_tss[cpu]);
+				9.终止__switch_to
+					prev_p参数(在edi中)被拷贝到eax, 在缺省情况下任何C语言返回值被传递到eax中, eax的值因此在调用__switch_to
+				  的过程中被保护起来, 因为调用switch_to宏假定eax总是用来存放被替换的进程描述符地址, 汇编ret指令把栈顶保存的
+				  返回地址装入eip程序计数器, ret指令在栈中找到标号为1的指令地址, 如果next_p第一次执行而以前从未被挂起, 就会找到
+				  ret_frim_fork()函数的起始地址
+
+					movl %edi,%eax /* return prev_p */
+					ret
+
+				#define switch_to(prev,next,last) do {     \
+						unsigned long esi,edi;      \
+						asm volatile("pushfl\n\t"  /* Save flags */ \
+						"pushl %%ebp\n\t"     \
+						"movl %%esp,%0\n\t" /* save ESP */  \
+						"movl %5,%%esp\n\t" /* restore ESP */ \
+						"movl $1f,%1\n\t"  /* save EIP */  \
+						"pushl %6\n\t"  /* restore EIP */ \
+						"jmp __switch_to\n"    \
+						"1:\t"      \
+						"popl %%ebp\n\t"     \
+						"popfl"      \
+						:"=m" (prev->thread.esp),"=m" (prev->thread.eip), \
+						"=a" (last),"=S" (esi),"=D" (edi)   \
+						:"m" (next->thread.esp),"m" (next->thread.eip), \
+						"2" (prev), "d" (next));    \
+				} while (0)
+
+		保存和加载FPU, MMX和XMM寄存器
+			FPU浮点运算单元, MMX指令加速多媒体应用程序执行, 8个128位XMM寄存器(处理单指令多数据)
+
+			80x86并不在TSS中保存FPU, MMX和XMM寄存器, 包含某种硬件支持, 能需要时保存这些寄存器的值, 由CR0寄存器中一个TS标志组成
+				执行硬件上下文切换时, 设置TS标志
+				每当TS标志被设置时执行ESCAPE, MMX, SSE或SSE2指令, 控制单元就产生一个"Device not available"异常
+
+			TS标志使得内核只有在真正需要时才保存和恢复FPU, MMX和XMM寄存器, 例如:
+				进程A使用数学协处理器, 发生上下文切换时, 内核置TS标志并把浮点寄存器保存在进程A的TSS中, 如果新进程B不利用协处理器, 内核不必恢复浮点寄存器内容
+				若B使用, CPU产生一个"Device not available"异常, 相应的异常处理程序用保存在进程B中的TSS值装载浮点寄存器
+
+			进程描述符包含两个附加的标志:
+				thread_info描述符的status字段中TS_USEDFPU标志, 表示进程在当前执行的过程中是否使用过FPU, MMX和XMM寄存器
+				包含在task_struct描述符的flags字段中的PF_USED_MATH标志, 这个标志表示thread.i387字段内容是否有意义, 两种情况下会被清零:
+					1.进程调用execve()系统调用
+					2.  在用户态下执行一个程序的进程开始执行一个信号处理程序时, 因为信号处理程序与程序的执行流是异步, 执行信号处理程序之前在thread.i387中
+					保存浮点寄存器处理程序结束后恢复它们, 因此信号处理程序可以使用数学协处理器
+
+			FPU寄存器
+				保存
+					  __switch_to函数把被替换进程prev描述符作为参数传递给__unlazy_fpu宏, 宏检查prev的TS_USEDFPU标志值, 如果该标志被置位说明prev在执行中使用
+					FPU, MMX, SSE, 或SSE2指令, 因此内核必须保存相关硬件上下文
+						if (prev->thread-info->status & TS_USEDFPU)
+							save_init_fpu(prev);
+						save_init_fpu()
+							1.  把fpu寄存器的内容转储到prev进程描述符中, 重新初始化fpu, 如果cpu使用SSE/SSE2扩展, 则还会转储XMM寄存器的内容,
+							并重新初始化SSE/SSE2单元, 否则执行1.2
+								1.1 asm volatile("fxsave %0; fnclex"
+													:"=m" (tsk->thread.i387.fxsave));
+								1.2 asm volatile("fxsave %0; fwait"
+													:"=m" (tsk->thread.i387.fxsave));
+							2.重置prev的TS_USEDFPU标志
+								prev->thread_info->status &= ~TS_USEDFPU;
+							3.用stts()设置CR0的TS标志, 该宏产生的汇编指令
+								movl %cr0, %eax
+								orl $8, %eax
+								movl %eax, %cr0
+
+				装载FPU寄存器
+					  在next进程恢复执行时, 浮点寄存器的内容还没被恢复, 不过, CR0的TS标志由__unlazy_fpu()设置, 因此next进程第一次试图执行ESCAPE
+					MMX或SSE/SSE2指令, 控制单元就产生一个"Device not available"异常, 异常调用处理程序运行match_state_restore函数, 处理程序把next进程当作current处理
+					match_state_restore()
+						asm volatile ("clts"); /* clear the TS flag of cr0 */
+						if (!(curren->flags & PF_USED_MATH))
+							inti_fpu(current);
+						restore_fpu(current);
+						current->thead.status |= TS_USEDFPU;
+
+				内核态使用FPU, MMX, SSE/SSE2单元
+					1.使用协处理器之前, 如果用户态进程使用了FPU(TS_USEDFPU标志), 内核必须调用kernel_fpu_begin(), 调用save_init_fpu()保存寄存器, 然后重新设置CR0寄存器TS标志
+					2.使用完成后, 内核必须调用kernel_fpu_end()设置CR0的TS标志, 当用户态执行协处理器指令时, math_state_restore函数恢复寄存器
+
+				实际上当移动或清楚大内存区字段时, 或计算校验和函数时, 才使用FPU, MMX或SSE/SSE2单元
+
+	创建进程
+		很多情况下, 子进程立即调用execve(), 并清除父进程拷贝过来的地址空间
+			1.写时复制技术允许父子进程读相同的物理页, 两者中有一个试图写一个物理页, 内核把这个页内容拷贝到一个新的物理页, 并把这个新的物理页分配给正在写的进程
+			2.轻量级进程允许父子进程共享, 进程在内核很多数据结构, 如页表, 打开文件表及信号处理
+			3.vfork()系统调用创建的进程共享父进程的内存地址空间, 防止父进程重写子进程需要的数据, 阻塞父进程的执行, 一直到子进程退出或执行一个新的程序位置
+
+		clone()
+			  负责建立新轻量级进程的堆栈并且调用对编程者隐藏的clone系统调用, clone系统调用没有fn和arg参数, 封装函数把fn指针存放在函数本身返回地址存放位置,
+			arg指针正好存放在子进程堆栈中fn下面, 当封装函数结束时, CPU从堆栈中取出返回地址, 然后执行fn(arg)函数
+				P133
+
+		fork()
+			  使用clone实现, flags参数指定为SIGCHLD信号及所有清0的clone标志, 它的child_stack参数是父进程当前的堆栈指针, 因此父进程和子进程暂时
+			共享一个用户态堆栈, 当父子进程中有一个试图改变栈, 立即得到用户态堆栈的一份拷贝
+
+		vfork()
+			使用clone实现, flags参数指定为SIGCHLD信号和CLINE_VM及CLINE_VFORK标志, clone的参数child_stack等于父进程当前的栈指针
+
+		do_fork()
+			负责处理clone, fork, vfork系统调用
+				P135
+
+			执行主要步骤
+				1.通过查找pidmap_array位图, 为子进程分配新的PID
+				2.  检查父进程的ptrace字段, 判定是否有另外进程跟踪父进程, do_fork检查debugger程序是否跟踪子进程(独立于由父进程指定CLONE_PTRACE标志的值)
+				如果子进程不是内核线程(CLONE_UNTRACED标志清0), 那么do_fork函数设置CLONE_PTRACE标志
+				3.调用copy_process复制进程描述符, 如果所有资源可用, 函数返回刚创建的task_strcut描述符地址
+				4.  设置CLONE_STOPPED标志, 或者必须跟踪子进程, 在p->ptrace中设置PT_PTRACED标志, 那么子进程状态设置为TASK_STOPPED,
+				并为子进程增加挂起的SIGSTOP信号, 在另外一个进程把子进程的状态恢复为TASK_RUNNING之前(通常发送SIGCONT信号), 子进程一直保存TASK_STOPPED状态
+				5.如果没有设置CLONE_STOPPED标志, 则调用wake_up_new_task
+					5.1 调整父子进程的调度参数
+					5.2   如果父子进程在同一个CPU上, 且父子进程不共享一组页表(CLONE_VM标志清0), 那么把子进程插入父进程运行队列中
+						插入时让子进程在父进程前面, 迫使子进程先于父进程运行, 如果子进程刷新地址空间, 在创建之后执行新程序, 如果
+						让父进程先运行, 那么写时复制将会执行一系列不必要的页面复制
+					5.3 父子进程在不同CPU上, 或者父子进程共享一组页表(CLONE_VM设置), 把子进程插入父进程运行队列队尾
+				6.如果设置CLONE_STOPPED标志则把子进程置为TASK_STOPPED状态
+				7.  如果父进程被跟踪, 则把子进程的PID存入current的ptrace_message字段调用ptrace_notify, 使当前进程停止运行, 并向当前
+				进程的父进程发送SIGCHLD信号, 子进程的祖父进程是跟踪父进程的debugger进程, SIGCHLD信号通知debugger进程, current已经创建
+				一个子进程, 可以通过查找current-》ptrace_message字段获得子进程的PID
+				8.如果设置CLONE_VFORK标志, 则把父进程插入等待队列, 并挂起父进程知道子进程释放自己的内存空间(子进程解说或执行新程序)
+				9.结束并返回子进程的PID
+
+			copy_process()
+				创建进程描述符以及子进程执行所需要的所有其他数据结构, 参数与do_fork()相同, 外加子进程的PID
+					1.检查参数clone_flags所传递标志的一致性, 以下条件返回错误码
+						1.1 CLONE_NEWNS和CLONE_FS标志都被设置
+						1.2 CLONE_THREAD标志被设置, 但CLONE_SIGHAND标志被清零(同一线程组中的轻量级进程必须共享信号)
+						1.3 CLONE_SIGHAND标志被设置, 但CLONE_VM被清0(共享信号处理程序的轻量级进程必须共享内存描述符)
+					2.通过调用security_task_create()以及调用security_task_alloc()执行所有附加的安全检查
+					3.调用dup_task_struct()为子进程获取进程描述符
+						3.1   如果需要, 则在当前进程中调用__unlazy_fpu(), 把FPU, MMX和SSE/SSE2寄存器内容保存到父进程的
+						    tread_info结构中, 稍后, dup_task_struct()将这些内容复制到子进程的thread_info结构中
+						3.2 执行alloc_task_struct()宏为新警察获取进程描述符, 并将描述符地址保存在tsk局部变量中
+						3.3   执行alloc_thread_info宏获取一块空闲的内存区, 用来存放新进程的thread_info结构和内核栈,
+						并将这块内存区字段的地址存在局部变量ti中, 内存区字段大小是8KB/4KB
+						3.4 将current进程描述符的内容复制到tsk所指向的task_struct结构中, 然后把tsk->thread_info置ti
+						3.5 把current进程的thread_info描述符的内容复制到ti所指向的结构中, 然后把ti->task置为tsk
+						3.6   把新进程描述符的使用计数器(tsk->usage)置为2, 用来表示进程描述符正在被使用而且其相应的进程
+							处于活动状态
+						3.7 返回新进程的进程描述符指针(tsk)
+					4.  检查存放在currrent->signal->rlim[RLIMIT_NPROC].rlim_cur变量中的值是否小于或等于用户所拥有的进程数,
+					  如果是, 则返回错误码, 除非进程没有root权限, 该函数从每用户数据结构user_struct中获取用户所拥有的进程数,
+					  通过进程描述符user字段的指针可以找到这个数据结构
+					5.递增user_struct结构的使用计数器(tsk->user->__count字段)和用户所拥有的进程的计数器(tsk->user->processes)
+					6.  检查系统中的进程数量(存放在nr_threads变量中)是否超过max_threads变量的值, 这个变量的缺省值取决于系统内存
+					  容量的大小, 总的原则是: 所有thread_info描述符和内核栈所占空间不能超过物理内存大小的1/8, 可以通过修改
+					  /proc/sys/kernel/threads-max文件更改数量
+					7.如果实现新进程的执行域和可执行格式的内核函数都包含在内核模块中, 则递增它们的使用计数器
+					8.设置与进程状态相关的几个关键字段
+						8.1 把大内核锁计数器tsk->lock_depth初始化为-1
+						8.2 把tsk->did_exec字段初始化为0: 记录了进程发出的execve()系统调用次数
+						8.3   更新从父进程复制到tsk->flags字段中的一些标志: 首先清楚PF_SUPERPRIV标志, 该标志表示进程是否使用了
+							某种超级用户权限, 然后设置PF_FORKNOEXEC标志, 它表示子进程还没有发出execve()系统调用
+					9.把新进程的PID存入tsk->pid字段
+					10.如果clone_flags参数中的CLONE_PARENT_SETTID标志被设置, 就把子进程的PID复制到参数parent_tidptr指向的用户态变量中
+					11.初始化子进程描述符中的list_head数据结构和自旋锁, 并为与挂起信号, 定时器以及实际统计表相关的字段
+					12.  调用copy_semundo(), copy_files(), copy_fs(), copy_sighand(), copy_signal(), copy_mm()和copy_namespace()创建
+					   新的数据结构, 并把父进程相应数据结构的值复制到新的数据结构中, 除非clone_flags参数指出不同的值
+					13.  调用copy_thread(), 用发出clone()系统调用时CPU寄存器的值来初始化子进程的内核栈, 不过, copy_thread()把eax寄存器
+					   对应字段的值置为0(fork()和clone()系统调用在子进程中的返回值), 子进程描述符的thread.esp字段初始化为子进程内核栈的
+					   基地址, 汇编(ret_frim_fork())的地址存放在thread.eip字段中, 如果父进程使用I/O权限位图, 则子进程获取该位图的一个拷贝,
+					   最后, 如果CLONE_SETTLS标志被设置, 则子进程获取由clone()系统调用的参数tls指向的用户态数据结构所表示的TLS段
+					14.  如果clone_flags参数的值被置为CLONE_CHILD_SETTID或CLONE_CHILD_CLEARTID, 就把child_tidptr参数的值分别复制到
+					   tsk->set_chid_tid或tsk->clear_child_tid字段, 这些标志说明: 必须改变子进程用户态地址空间的child_tidptr所指向的
+					   变量值, 实际操作稍后执行
+					15.  清除子进程thread_info结构的TIF_SYSCALL_TRACE标志, 已使ret_from_fork()函数不会把系统调用结束的消息通知给调试进程
+					   对子进程的跟踪是由tsk->ptrace中的PTRACE_SYSCALL标志来控制, 所以子进程的系统调用跟踪不会被禁用
+					16.  用clone_flags参数低位的信号数字编码初始化tsk->exit_signal字段, 如果CLONE_THREAD标志被置位, 把tsk->exit_signal
+					   字段初始化为-1, 只有当线程组的最后一个成员(通常为线程组的领头)"死亡", 才会产生一个信号, 以通知线程组的领头进程的父进程
+					17.  调用sched_fork()完成对新进程调度程序数据结构的初始化, 该函数把新进程的状态设置为TASK_RUNNING, 并把thread_info结构
+					   的preempt_count字段设置为1, 从而禁止内核抢占, 为了保证公平的进程调度, 该函数在父子进程之间共享父进程的时间片
+					18.把新进程的thread_info结构的cpu字段设置为smp_processor_id()所返回的本地CPU号
+					19.  初始化表示亲子关系字段, 尤其是, 如果CLONE_PARENT或CLONE_THREAD被设置, 就用current->real_parent的值初始化task->real_parent
+					   和tsk->parent, 因此, 子进程的父进程似乎是当前进程的父进程, 否则, 把tsk->real_parent和tsk->parent置为当前进程
+					20.  如果不需要跟子进程(没有设置CLONE_PTRAC标志), 就把tsk->ptrace字段设置为0, tsk->ptrace字段会存放一些标志, 而这些标志
+					   是在一个进程被另外一个进程跟踪时才会用到, 采用这种方式, 即使当前进程被跟踪, 子进程也不会被跟踪
+					21.执行SET_LINKS宏, 把新进程描述符插入进程链表
+					22.  如果子进程必须被跟踪(tsk->ptrace字段的PT_PTRACED标志被设置), 就把current->parent赋给tsk->parent, 并把子进程插入
+					   调试程序的跟踪链表中
+					23.调用attach_pid()把新进程描述符的PID插入pidhash[PIDTYPE_PID]散列表
+					24.如果子进程是线程组的领头进程(CLONE_THREAD标志被清0)
+						24.1 把tsk->tgid的初值置为tsk->pid
+						24.2 把tsk->group_leader的初值置为tsk
+						24.3 调用三次attach_pid(), 把子进程分别插入PIDTYPE_TGID, PIDTYPE_PGID, PIDTYPE_SID类型的PID散列表
+					25.否则, 如果子进程属于它的父进程的线程组(CLONE_THREAD标志被设置)
+						25.1 把tsk->tgid的初值置为tsk->current->tgid
+						25.2 把tsk->group_leader的初值置为current->group_leader的值
+						25.3 调用attach_pid(), 把子进程分别插入PIDTYPE_TGID类型散列表(插入current->group_leader进程的每个PID链表)
+					26.新进程加入到进程合集, 递增nr_threads变量的值
+					27.递增total_forks变量记录被创建的进程数量
+					28.终止并返回子进程描述符指针(tsk)
+
+				  调用程序决定何时把CPU交给子进程, 调度程序继续完善子进程: 把子进程描述符thread字段的值装入几个CPU寄存器, 把函数
+				ret_from_fork()的地址装入eip寄存器, 这汇编函数调用schedule_tail()函数(依次调用finish_task_switch()来完成进程切换),
+				用存放在栈中的值再装载所有的寄存器, 并强迫CPU返回到用户态, 然后, 在fork(), vfork()或clone()系统调用结束时, 新进程开始执行,
+				系统调用的返回值放在eax寄存器中: 返回给子进程的值是0, 返回给父进程的值是子进程的PID
+
+
+				P141
+
+双向链表
+	对于每个链表, 必须实现一组原语操作: 初始化, 插入和删除一个元素, 扫描链表等
+	定义list_head数据结构, 字段next和prev分别表示通用双向链表前后指针
+	新链表用LIST_HEAD(name)创建, 申明类型为list_head的新变量, 初始化prev和next字段指向list_name变量
+	处理函数和宏
+		list_add(n, p) 把n指向的元素插入p所指向的特定元素之后
+		list_add_tail(n, p) 把n指向的元素插到p指向特定元素之前
+		list_del(p) 删除p所指向的元素
+		list_empty(p) 检查第一个元素的地址p指定的链表是否为空
+		list_entry(p, t, m) 返回类型为t的数据结构地址, 其中类型t含有list_head字段, 而list_head字段中含有名字m和地址p
+		list_for_each(p, h) 对地址h指定的链表进行扫描, 每次循环时, 通过p返回指向链表元素的list_head结构的指针
+		list_for_each_entry(p, h, m) 返回包含list_head结构的数据结构地址
