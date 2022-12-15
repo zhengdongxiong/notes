@@ -113,9 +113,16 @@ id=>关键字: 描述:>url 与描述文本绑定的链接
 start 流程开始, 圆角矩形
 operation 操作, 直角矩形
 condition 判断, 菱形
+parallel 多输出
 subroutine 子流程, 左右带空白框矩形
 inputoutput 输入输出, 平行四边形
 end 结束, 圆角矩形
+
+方向控制
+yes/true condition类型变量表示yes流向
+no/false condition类型变量表示no流向
+left/right 表示连线出口在节点位置, 可以跟condition变量和subroutine一起使用: cond(yes, right)
+path1/path2/path3: parallel变量的三个出口路径默认下面是出口
 
 模块1 id->模块2 id
 条件模块id (描述)->模块id(direction) 条件模块跳转到对应的执行模块, 指定对应分支的布局方向

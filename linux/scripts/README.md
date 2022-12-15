@@ -8,3 +8,4 @@ bash 脚本
 | :---: | :---: |
 | build_all.sh | 编译内核 |
 | find-linux-headers.sh | 查找内核源码中头文件等 |
+| make-pkpg | 找内核头文件 |

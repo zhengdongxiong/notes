@@ -1,16 +1,10 @@
 #!/bin/sh
 
-test -f .config && echo ".config"
-test -f Module.symvers && echo "Module.symvers"
+find . -name Makefile* -o -name Kbuild* -o -name Kconfig* -o -name *.pl > hdrfiles
+find arch/ -name module.lds -o -name Kbuild.platforms -o -name Platform >> hdrfiles
+find $(find arch/ -name include -o -name scripts -type d) include scripts -type f -o -type l >> hdrfiles
+find tools/objtool -type f -executable >> hdrfiles
+find scripts/gcc-plugins -name *.so -o -name gcc-common.h >> hdrfiles
+find Module.symvers .config >> hdrfiles
 
-find . \( -path "./include" -o -path "./tools" -o -path "./scripts" \) -prune \
-	   -o -name "*.h"         -print \
-	   -o -name "Makefile*"   -print \
-	   -o -name "Kbuild*"     -print \
-	   -o -name "Kconfig*"    -print \
-       -o -name "module.lds*" -print
-
-test -d include && find include -type f -print
-test -d tools   && find tools   -type f -a ! -name "*.o*" -a ! -name "*.cmd" -print
-test -d scripts && find scripts -type f -a ! -name "*.o*" -a ! -name "*.cmd" -print
-
+tar -cf linux-headers-.tar -T hdrfiles
