@@ -6,6 +6,4 @@ bash 脚本
 
 | 文件目录 | 说明 |
 | :---: | :---: |
-| build_all.sh | 编译内核 |
-| find-linux-headers.sh | 查找内核源码中头文件等 |
-| make-pkpg | 找内核头文件 |
+| linux.sh | 编译内核生成一键更换内核安装包 |
