@@ -7,7 +7,7 @@ export LD_LIBRARY_PATH=/opt/swgcc830_cross_tools-7b446b82e/usr/lib_for_gcc/lib
 export LOCALVERSION=
 
 path=$(pwd)
-cpu=24
+cpu=$(nproc)
 thread=-j${cpu}
 config=${1:-gxw_uos_defconfig}
 kdir=koutput
