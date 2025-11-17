@@ -1,0 +1,2 @@
+powershell 导出 putty 配置:
+	ret export HKEY_CURRENT_USER\SOFTWARE\SimonTatham\PuTTY putty.reg

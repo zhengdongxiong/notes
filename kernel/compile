@@ -1,0 +1,52 @@
+Cross Compile
+LLVM:
+	clang
+	--target=<工具链名称>
+	--gcc-toolchain=<详见 help>
+	--sysroot=<包含 etc/, lib/, sbin/, usr/, var/ 等目录>
+
+RISC-V:
+	RISC-V GCC:
+		riscv/
+		├── bin
+		├── include
+		├── lib
+		├── libexec
+		├── riscv64-unknown-linux-gnu # 工具链名称
+		├── share
+		└── sysroot
+	LLVM:
+		clang
+		-fuse-lld=lld
+		--target=riscv64-unknown-linux-gnu
+		--gcc-toolchain=<RISC-V GCC>
+		--sysroot=<RISC-V GCC>/sysroot
+
+AARCH64:
+	AARCH64 GCC:
+		aarch64/
+		├── 11.2-2022.02-x86_64-aarch64-none-linux-gnu-manifest.txt
+		├── aarch64-none-linux-gnu # 工具链名称
+		├── bin
+		├── include
+		├── lib
+		├── lib64
+		├── libexec
+		└── share
+
+	LLVM:
+		clang
+		-fuse-lld=lld
+		--target=aarch64-none-linux-gnu
+		--gcc-toolchain=<AARCH64 GCC>
+		--sysroot=<AARCH64 GCC>/aarch64-none-linux-gnu/libc
+
+Compile LLVM:
+	cmake -G "Ninja"
+	-DCMAKE_C_COMPILER=clang
+	-DCMAKE_CXX_COMPILER=clang++
+	-DCMAKE_BUILD_TYPE=Release
+	-DLLVM_ENABLE_PROJECTS="clang;lld;lldb;clang-tools-extra;mlir;polly;bolt;libclc"
+	-DLLVM_ENABLE_RUNTIMES="compiler-rt;libcxx;libcxxabi;libunwind"
+	-DLLVM_TARGETS_TO_BUILD="RISCV"
+	../llvm
